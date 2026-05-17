@@ -9,8 +9,9 @@ import { DocBot } from "./agents/doc-bot.js";
 import { QABot } from "./agents/qa-bot.js";
 import { storeMemory, getAllMemories, initializeMemories } from "./memory/store.js";
 
-const MAX_HISTORY = 40;      // message objects kept in chat history
-const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes per run
+const MAX_HISTORY = 40;
+const MAX_RUN_HISTORY = 60;
+const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000;
 
 const CHAT_TOOLS = [
   {
@@ -49,9 +50,9 @@ const CHAT_TOOLS = [
     input_schema: {
       type: "object",
       properties: {
-        task: { type: "string", description: "What the specialist was asked to do" },
-        specialist: { type: "string", description: "Which bot produced the output" },
-        output: { type: "string", description: "The specialist's output to review" },
+        task: { type: "string" },
+        specialist: { type: "string" },
+        output: { type: "string" },
       },
       required: ["task", "specialist", "output"],
     },
@@ -87,10 +88,7 @@ const AUTONOMY_TOOLS = [
     description: "Pause autonomous execution and ask the user a question before continuing.",
     input_schema: {
       type: "object",
-      properties: {
-        question: { type: "string" },
-        context: { type: "string" },
-      },
+      properties: { question: { type: "string" }, context: { type: "string" } },
       required: ["question"],
     },
   },
@@ -169,18 +167,33 @@ export class Orchestrator {
     return `<team_memories>\n${mems.map((m) => `[${m.type}:${m.subject}] ${m.content}`).join("\n")}\n</team_memories>\n\n`;
   }
 
-  #trimHistory() {
-    if (this.history.length > MAX_HISTORY) {
-      this.history = this.history.slice(-MAX_HISTORY);
+  // Removes the oldest complete user turn to keep history within limit.
+  // Finds the second real user message (non-tool_result) and slices from there,
+  // guaranteeing the history always starts with a user text message and
+  // never contains orphaned tool_use / tool_result pairs.
+  static #trimMessages(messages, limit) {
+    if (messages.length <= limit) return messages;
+    let realUserCount = 0;
+    for (let i = 0; i < messages.length; i++) {
+      const msg = messages[i];
+      const isRealUser =
+        msg.role === "user" &&
+        !(Array.isArray(msg.content) && msg.content[0]?.type === "tool_result");
+      if (isRealUser) {
+        realUserCount++;
+        if (realUserCount === 2) return messages.slice(i);
+      }
     }
+    return messages;
   }
 
   async chat(userMessage) {
     const content = this.history.length === 0 ? `${this.#memoryPrefix()}${userMessage}` : userMessage;
     this.history.push({ role: "user", content });
-    this.#trimHistory();
 
     while (true) {
+      this.history = Orchestrator.#trimMessages(this.history, MAX_HISTORY);
+
       const response = await this.client.messages.create({
         model: "claude-opus-4-7",
         max_tokens: 8096,
@@ -191,7 +204,6 @@ export class Orchestrator {
       });
 
       this.history.push({ role: "assistant", content: response.content });
-      this.#trimHistory();
 
       if (response.stop_reason === "end_turn") {
         return response.content.filter((b) => b.type === "text").map((b) => b.text).join("");
@@ -209,7 +221,7 @@ export class Orchestrator {
 
   async run(task, { onStep, maxSteps = 30, timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
     const deadline = Date.now() + timeoutMs;
-    const runHistory = [
+    let runHistory = [
       { role: "user", content: `${this.#memoryPrefix(20)}AUTONOMOUS TASK: ${task}` },
     ];
 
@@ -219,6 +231,8 @@ export class Orchestrator {
       if (Date.now() > deadline) {
         return { status: "timeout", summary: `Stopped: exceeded ${timeoutMs / 1000}s time limit.` };
       }
+
+      runHistory = Orchestrator.#trimMessages(runHistory, MAX_RUN_HISTORY);
 
       const response = await this.client.messages.create({
         model: "claude-opus-4-7",
