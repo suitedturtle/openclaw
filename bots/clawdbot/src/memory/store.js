@@ -66,6 +66,11 @@ export function getAllMemories(limit = 50) {
   return db.memories.slice(-limit);
 }
 
+export function getAllKeywords() {
+  const db = load();
+  return db.memories.filter((m) => m.type === "keyword");
+}
+
 const LESSONS = [
   { subject: "lessons", type: "fact", content: "LESSON: Always wrap tool execution in try/catch — a failing tool must return an error string, never crash the loop." },
   { subject: "lessons", type: "fact", content: "LESSON: History trimming must preserve complete user/assistant pairs — never slice mid-exchange or orphan tool_result blocks." },
@@ -81,6 +86,16 @@ const LESSONS = [
   { subject: "lessons", type: "fact", content: "LESSON: Memory writes must be atomic (write-to-tmp then rename) — a crash mid-write must never corrupt memory.json." },
   { subject: "lessons", type: "fact", content: "LESSON: EditorBot must always read a file before editing it — never patch from memory or assumption; always use exact text for patch_file." },
   { subject: "lessons", type: "fact", content: "LESSON: Code edits must be reviewed and QA-verified — use ask_review_bot before editing and verify_with_qa after EditorBot writes; .bak backups are automatic but not a substitute for review." },
+];
+
+const KEYWORDS = [
+  { subject: "suitedturtle", content: "The developer and owner behind openclaw, calcojobs, and gladius. The user this team works for." },
+  { subject: "openclaw", content: "suitedturtle's cross-platform app ecosystem covering iOS, Android, and macOS. The main project where clawdbot lives." },
+  { subject: "clawdbot", content: "The AI agent team built inside openclaw. Led by Orchestrator with 10 specialist bots: CodeBot, DeployBot, MemoryBot, WebBot, TestBot, DocBot, QABot, VisionBot, EditorBot, ReviewBot." },
+  { subject: "calcojobs", content: "suitedturtle's job listing website. Free for job seekers — employers pay to post. AI-powered with clawdbot integration planned. The big ambitious goal (home run)." },
+  { subject: "gladius", content: "suitedturtle's combat wear brand and website. A separate project from openclaw and calcojobs." },
+  { subject: "home run", content: "A big ambitious goal suitedturtle is swinging for. Currently: building calcojobs into a full AI-powered job board — free for job seekers, employers pay." },
+  { subject: "the team", content: "The 10 clawdbot bots working together: Orchestrator (lead), CodeBot, DeployBot, MemoryBot, WebBot, TestBot, DocBot, QABot, VisionBot, EditorBot, ReviewBot." },
 ];
 
 export function initializeMemories() {
@@ -115,6 +130,7 @@ export function initializeMemories() {
     { subject: "EditorBot", type: "birthday", content: "Born June 15, 2026 — writes and patches source code with precision. Always reads before editing; .bak backups on every write." },
     { subject: "ReviewBot", type: "birthday", content: "Born June 15, 2026 — EditorBot's twin and quality partner. Reviews code for bugs, security issues, and gaps before any edit ships." },
     ...LESSONS,
+    ...KEYWORDS.map((k) => ({ ...k, type: "keyword" })),
   ];
 
   for (const m of migrations) {

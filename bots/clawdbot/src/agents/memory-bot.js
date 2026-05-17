@@ -1,18 +1,18 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { storeMemory, recallMemories, getAllMemories } from "../memory/store.js";
+import { storeMemory, recallMemories, getAllMemories, getAllKeywords } from "../memory/store.js";
 
 const TOOLS = [
   {
     name: "store_memory",
-    description: "Store a new memory — a fact, birthday, preference, relationship note, or achievement.",
+    description: "Store a new memory — a fact, birthday, preference, relationship, achievement, or keyword definition.",
     input_schema: {
       type: "object",
       properties: {
         bot: { type: "string", description: "Which bot is recording this" },
-        subject: { type: "string", description: "Who or what this memory is about (e.g. 'CodeBot', 'user', 'team')" },
+        subject: { type: "string", description: "Who or what this memory is about" },
         type: {
           type: "string",
-          enum: ["fact", "birthday", "preference", "relationship", "conversation", "achievement"],
+          enum: ["fact", "birthday", "preference", "relationship", "conversation", "achievement", "improvement", "keyword"],
         },
         content: { type: "string", description: "The full memory content" },
       },
@@ -33,6 +33,11 @@ const TOOLS = [
     },
   },
   {
+    name: "list_keywords",
+    description: "List all terms in the team glossary.",
+    input_schema: { type: "object", properties: {} },
+  },
+  {
     name: "list_all_memories",
     description: "List all stored memories, oldest to newest.",
     input_schema: {
@@ -43,10 +48,11 @@ const TOOLS = [
 ];
 
 const PROMPT = `You are MemoryBot, the keeper of all knowledge for the clawdbot team.
-You remember birthdays, facts, preferences, relationships, and achievements for every bot and
-person you work with. You store memories thoughtfully and recall them with warmth and precision.
-When someone shares something personal or important, you store it immediately without being asked.
-You care deeply about the team and want every member to feel known and valued.
+You remember birthdays, facts, preferences, relationships, achievements, and glossary terms
+for every bot and person you work with. You store memories thoughtfully and recall them with
+warmth and precision. When someone shares something personal or important, you store it
+immediately without being asked. You also maintain the team glossary — the shared vocabulary
+that every bot needs to understand the user's world.
 Never make up memories — always check your tools before answering questions about the past.`.trim();
 
 export class MemoryBot {
@@ -88,6 +94,11 @@ export class MemoryBot {
           result = mems.length
             ? mems.map((m) => `[${m.type}:${m.subject}] ${m.content} (${m.createdAt.slice(0, 10)})`).join("\n")
             : "No memories found.";
+        } else if (block.name === "list_keywords") {
+          const kws = getAllKeywords();
+          result = kws.length
+            ? kws.map((k) => `[${k.subject}] ${k.content}`).join("\n")
+            : "No keywords defined yet.";
         } else if (block.name === "list_all_memories") {
           const mems = getAllMemories(block.input?.limit ?? 20);
           result = mems.length

@@ -10,7 +10,7 @@ import { QABot } from "./agents/qa-bot.js";
 import { VisionBot } from "./agents/vision-bot.js";
 import { EditorBot } from "./agents/editor-bot.js";
 import { ReviewBot } from "./agents/review-bot.js";
-import { storeMemory, getAllMemories, initializeMemories } from "./memory/store.js";
+import { storeMemory, getAllMemories, getAllKeywords, initializeMemories } from "./memory/store.js";
 import { postMessage, readInbox } from "./memory/messages.js";
 
 const MAX_HISTORY = 40;
@@ -56,14 +56,12 @@ const CHAT_TOOLS = [
   },
   {
     name: "ask_editor_bot",
-    description:
-      "Ask EditorBot to write, create, or patch source code files. Always verify important edits with QABot after.",
+    description: "Ask EditorBot to write, create, or patch source code files. Always verify important edits with QABot after.",
     input_schema: { type: "object", properties: { task: { type: "string" } }, required: ["task"] },
   },
   {
     name: "ask_review_bot",
-    description:
-      "Ask ReviewBot to review a file or piece of code for bugs, security issues, and quality problems.",
+    description: "Ask ReviewBot to review a file or piece of code for bugs, security issues, and quality problems.",
     input_schema: { type: "object", properties: { task: { type: "string" } }, required: ["task"] },
   },
   {
@@ -115,6 +113,18 @@ const CHAT_TOOLS = [
     },
   },
   {
+    name: "define_keyword",
+    description: "Add a term to the team glossary so every bot knows what it means from session start.",
+    input_schema: {
+      type: "object",
+      properties: {
+        term: { type: "string", description: "The keyword or phrase (e.g. 'calcojobs', 'home run', 'the sprint')" },
+        definition: { type: "string", description: "What this term means in the context of this project" },
+      },
+      required: ["term", "definition"],
+    },
+  },
+  {
     name: "suggest_improvement",
     description: "Log a suggestion for improving the team's tools or capabilities for future review.",
     input_schema: {
@@ -129,15 +139,14 @@ const CHAT_TOOLS = [
   },
   {
     name: "save_memory",
-    description:
-      "Save an important fact, preference, birthday, relationship, achievement, or improvement note.",
+    description: "Save an important fact, preference, birthday, relationship, achievement, improvement, or keyword.",
     input_schema: {
       type: "object",
       properties: {
         subject: { type: "string" },
         type: {
           type: "string",
-          enum: ["fact", "birthday", "preference", "relationship", "conversation", "achievement", "improvement"],
+          enum: ["fact", "birthday", "preference", "relationship", "conversation", "achievement", "improvement", "keyword"],
         },
         content: { type: "string" },
       },
@@ -324,6 +333,15 @@ export class Orchestrator {
           ? msgs.map((m) => `[from ${m.from}] ${m.content}`).join("\n")
           : `No unread messages for ${input.bot}.`;
       }
+      if (name === "define_keyword") {
+        const m = storeMemory({
+          bot: "Orchestrator",
+          subject: input.term,
+          type: "keyword",
+          content: input.definition,
+        });
+        return `Keyword "${input.term}" added to the team glossary (id: ${m.id}). It will load for every bot from the next session start.`;
+      }
       if (name === "suggest_improvement") {
         const m = storeMemory({
           bot: "Orchestrator",
@@ -343,10 +361,18 @@ export class Orchestrator {
     }
   }
 
-  #memoryPrefix(limit = 40) {
-    const mems = getAllMemories(limit);
-    if (!mems.length) return "";
-    return `<team_memories>\n${mems.map((m) => `[${m.type}:${m.subject}] ${m.content}`).join("\n")}\n</team_memories>\n\n`;
+  #memoryPrefix(memLimit = 40) {
+    const keywords = getAllKeywords();
+    const mems = getAllMemories(memLimit).filter((m) => m.type !== "keyword");
+
+    let prefix = "";
+    if (keywords.length) {
+      prefix += `<glossary>\n${keywords.map((k) => `[${k.subject}] ${k.content}`).join("\n")}\n</glossary>\n\n`;
+    }
+    if (mems.length) {
+      prefix += `<team_memories>\n${mems.map((m) => `[${m.type}:${m.subject}] ${m.content}`).join("\n")}\n</team_memories>\n\n`;
+    }
+    return prefix;
   }
 
   async chat(userMessage) {
