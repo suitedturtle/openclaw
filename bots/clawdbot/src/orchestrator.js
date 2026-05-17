@@ -11,6 +11,7 @@ import { storeMemory, getAllMemories, initializeMemories } from "./memory/store.
 
 const MAX_HISTORY = 40;
 const MAX_RUN_HISTORY = 60;
+const MAX_TOOL_RESULT = 8 * 1024; // 8 KB per tool result stored in history
 const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000;
 
 const CHAT_TOOLS = [
@@ -109,6 +110,28 @@ Rules:
 - Use task_complete when done with a clear summary
 - Save important findings to memory along the way`.trim();
 
+function capToolResult(result) {
+  const s = String(result);
+  if (s.length <= MAX_TOOL_RESULT) return s;
+  return s.slice(0, MAX_TOOL_RESULT) + `\n[...truncated — ${s.length - MAX_TOOL_RESULT} chars omitted]`;
+}
+
+function trimMessages(messages, limit) {
+  if (messages.length <= limit) return messages;
+  let realUserCount = 0;
+  for (let i = 0; i < messages.length; i++) {
+    const msg = messages[i];
+    const isRealUser =
+      msg.role === "user" &&
+      !(Array.isArray(msg.content) && msg.content[0]?.type === "tool_result");
+    if (isRealUser) {
+      realUserCount++;
+      if (realUserCount === 2) return messages.slice(i);
+    }
+  }
+  return messages;
+}
+
 export class Orchestrator {
   constructor({ apiKey } = {}) {
     const key = apiKey ?? process.env.ANTHROPIC_API_KEY;
@@ -126,39 +149,43 @@ export class Orchestrator {
   }
 
   async #executeTool(name, input) {
-    if (name === "ask_code_bot") {
-      process.stdout.write("  [CodeBot thinking...]\n");
-      return this.codeBot.ask(input.question);
+    try {
+      if (name === "ask_code_bot") {
+        process.stdout.write("  [CodeBot thinking...]\n");
+        return await this.codeBot.ask(input.question);
+      }
+      if (name === "ask_deploy_bot") {
+        process.stdout.write("  [DeployBot running...]\n");
+        return await this.deployBot.ask(input.task);
+      }
+      if (name === "ask_memory_bot") {
+        process.stdout.write("  [MemoryBot remembering...]\n");
+        return await this.memoryBot.ask(input.question);
+      }
+      if (name === "ask_web_bot") {
+        process.stdout.write("  [WebBot fetching...]\n");
+        return await this.webBot.ask(input.question);
+      }
+      if (name === "ask_test_bot") {
+        process.stdout.write("  [TestBot running tests...]\n");
+        return await this.testBot.ask(input.task);
+      }
+      if (name === "ask_doc_bot") {
+        process.stdout.write("  [DocBot writing...]\n");
+        return await this.docBot.ask(input.task);
+      }
+      if (name === "verify_with_qa") {
+        process.stdout.write("  [QABot reviewing...]\n");
+        return await this.qaBot.review({ task: input.task, specialist: input.specialist, output: input.output });
+      }
+      if (name === "save_memory") {
+        const m = storeMemory({ bot: "Orchestrator", ...input });
+        return `Memory saved (id: ${m.id})`;
+      }
+      return `Unknown tool: ${name}`;
+    } catch (e) {
+      return `[${name} failed] ${e.message} — report this to the user and try a different approach.`;
     }
-    if (name === "ask_deploy_bot") {
-      process.stdout.write("  [DeployBot running...]\n");
-      return this.deployBot.ask(input.task);
-    }
-    if (name === "ask_memory_bot") {
-      process.stdout.write("  [MemoryBot remembering...]\n");
-      return this.memoryBot.ask(input.question);
-    }
-    if (name === "ask_web_bot") {
-      process.stdout.write("  [WebBot fetching...]\n");
-      return this.webBot.ask(input.question);
-    }
-    if (name === "ask_test_bot") {
-      process.stdout.write("  [TestBot running tests...]\n");
-      return this.testBot.ask(input.task);
-    }
-    if (name === "ask_doc_bot") {
-      process.stdout.write("  [DocBot writing...]\n");
-      return this.docBot.ask(input.task);
-    }
-    if (name === "verify_with_qa") {
-      process.stdout.write("  [QABot reviewing...]\n");
-      return this.qaBot.review({ task: input.task, specialist: input.specialist, output: input.output });
-    }
-    if (name === "save_memory") {
-      const m = storeMemory({ bot: "Orchestrator", ...input });
-      return `Memory saved (id: ${m.id})`;
-    }
-    return `Unknown tool: ${name}`;
   }
 
   #memoryPrefix(limit = 40) {
@@ -167,32 +194,12 @@ export class Orchestrator {
     return `<team_memories>\n${mems.map((m) => `[${m.type}:${m.subject}] ${m.content}`).join("\n")}\n</team_memories>\n\n`;
   }
 
-  // Removes the oldest complete user turn to keep history within limit.
-  // Finds the second real user message (non-tool_result) and slices from there,
-  // guaranteeing the history always starts with a user text message and
-  // never contains orphaned tool_use / tool_result pairs.
-  static #trimMessages(messages, limit) {
-    if (messages.length <= limit) return messages;
-    let realUserCount = 0;
-    for (let i = 0; i < messages.length; i++) {
-      const msg = messages[i];
-      const isRealUser =
-        msg.role === "user" &&
-        !(Array.isArray(msg.content) && msg.content[0]?.type === "tool_result");
-      if (isRealUser) {
-        realUserCount++;
-        if (realUserCount === 2) return messages.slice(i);
-      }
-    }
-    return messages;
-  }
-
   async chat(userMessage) {
     const content = this.history.length === 0 ? `${this.#memoryPrefix()}${userMessage}` : userMessage;
     this.history.push({ role: "user", content });
 
     while (true) {
-      this.history = Orchestrator.#trimMessages(this.history, MAX_HISTORY);
+      this.history = trimMessages(this.history, MAX_HISTORY);
 
       const response = await this.client.messages.create({
         model: "claude-opus-4-7",
@@ -213,7 +220,7 @@ export class Orchestrator {
       for (const block of response.content) {
         if (block.type !== "tool_use") continue;
         const result = await this.#executeTool(block.name, block.input);
-        results.push({ type: "tool_result", tool_use_id: block.id, content: String(result) });
+        results.push({ type: "tool_result", tool_use_id: block.id, content: capToolResult(result) });
       }
       this.history.push({ role: "user", content: results });
     }
@@ -232,7 +239,7 @@ export class Orchestrator {
         return { status: "timeout", summary: `Stopped: exceeded ${timeoutMs / 1000}s time limit.` };
       }
 
-      runHistory = Orchestrator.#trimMessages(runHistory, MAX_RUN_HISTORY);
+      runHistory = trimMessages(runHistory, MAX_RUN_HISTORY);
 
       const response = await this.client.messages.create({
         model: "claude-opus-4-7",
@@ -274,7 +281,7 @@ export class Orchestrator {
           if (onStep)
             onStep({ type: "step", step: stepCount, tool: block.name, result: String(result).slice(0, 300) });
         }
-        results.push({ type: "tool_result", tool_use_id: block.id, content: String(result) });
+        results.push({ type: "tool_result", tool_use_id: block.id, content: capToolResult(result) });
       }
 
       if (done) return { status: "complete", summary: "Task complete." };
