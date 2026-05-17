@@ -1,6 +1,10 @@
 #!/usr/bin/env node
+import { config } from "dotenv";
 import readline from "node:readline";
 import { ClawBot } from "../src/bot.js";
+
+// Load .env from the package root (bots/clawdbot/.env) regardless of cwd
+config({ path: new URL("../.env", import.meta.url) });
 
 const bot = new ClawBot();
 
