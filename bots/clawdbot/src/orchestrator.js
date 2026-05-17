@@ -11,8 +11,9 @@ import { storeMemory, getAllMemories, initializeMemories } from "./memory/store.
 
 const MAX_HISTORY = 40;
 const MAX_RUN_HISTORY = 60;
-const MAX_TOOL_RESULT = 8 * 1024; // 8 KB per tool result stored in history
+const MAX_TOOL_RESULT = 8 * 1024;
 const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000;
+const API_MAX_RETRIES = 2;
 
 const CHAT_TOOLS = [
   {
@@ -104,10 +105,16 @@ Loop:
 3. VERIFY — use verify_with_qa on important outputs before proceeding
 4. REPEAT — keep going until done
 
-Rules:
-- Verify significant outputs with QABot; fix FAIL verdicts before moving on
-- If a step fails twice, use needs_human_input
+Retry and escalation rules:
+- If a tool returns an error, try a different approach once before escalating
+- If QABot returns FAIL, fix the specific issue it identified and retry that step once
+- If QABot returns FAIL a second time on the same step, use needs_human_input — do not loop further
+- If QABot returns WARN, note the issues but proceed unless they are blocking
+- Never retry the same failing action more than twice total
+
+General rules:
 - Use task_complete when done with a clear summary
+- Use needs_human_input for decisions only the user can make
 - Save important findings to memory along the way`.trim();
 
 function capToolResult(result) {
@@ -146,6 +153,19 @@ export class Orchestrator {
     this.qaBot = new QABot({ apiKey: key });
     this.history = [];
     initializeMemories();
+  }
+
+  // Retries on transient API errors (rate limits, server errors) with exponential backoff.
+  async #createMessage(params) {
+    for (let attempt = 0; attempt <= API_MAX_RETRIES; attempt++) {
+      try {
+        return await this.client.messages.create(params);
+      } catch (e) {
+        const retryable = e.status === 429 || e.status === 529 || (e.status >= 500 && e.status < 600);
+        if (!retryable || attempt === API_MAX_RETRIES) throw e;
+        await new Promise((r) => setTimeout(r, Math.pow(2, attempt) * 1000));
+      }
+    }
   }
 
   async #executeTool(name, input) {
@@ -201,7 +221,7 @@ export class Orchestrator {
     while (true) {
       this.history = trimMessages(this.history, MAX_HISTORY);
 
-      const response = await this.client.messages.create({
+      const response = await this.#createMessage({
         model: "claude-opus-4-7",
         max_tokens: 8096,
         thinking: { type: "adaptive" },
@@ -241,7 +261,7 @@ export class Orchestrator {
 
       runHistory = trimMessages(runHistory, MAX_RUN_HISTORY);
 
-      const response = await this.client.messages.create({
+      const response = await this.#createMessage({
         model: "claude-opus-4-7",
         max_tokens: 8096,
         thinking: { type: "adaptive" },

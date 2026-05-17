@@ -1,9 +1,10 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync, renameSync, existsSync } from "node:fs";
 
 const DATA_DIR = join(homedir(), ".clawdbot");
 const DB_PATH = join(DATA_DIR, "memory.json");
+const TMP_PATH = join(DATA_DIR, "memory.json.tmp");
 const MAX_MEMORIES = 500;
 
 function ensureDir() {
@@ -20,13 +21,15 @@ function load() {
   }
 }
 
+// Atomic write: write to a temp file then rename into place.
+// Prevents JSON corruption if the process is killed mid-write.
 function save(db) {
   ensureDir();
-  // Trim to max before saving so the file never grows unbounded
   if (db.memories.length > MAX_MEMORIES) {
     db.memories = db.memories.slice(-MAX_MEMORIES);
   }
-  writeFileSync(DB_PATH, JSON.stringify(db, null, 2), "utf8");
+  writeFileSync(TMP_PATH, JSON.stringify(db, null, 2), "utf8");
+  renameSync(TMP_PATH, DB_PATH);
 }
 
 export function storeMemory({ bot, subject, type, content }) {
@@ -73,6 +76,9 @@ const LESSONS = [
   { subject: "lessons", type: "fact", content: "LESSON: WebBot must block private/local addresses (localhost, 127.x, 10.x, 192.168.x) before any fetch." },
   { subject: "lessons", type: "fact", content: "LESSON: run() history must be trimmed — unbounded runHistory overflows the context window on long autonomous tasks." },
   { subject: "lessons", type: "fact", content: "LESSON: Tool results must be capped at 8 KB in history — large grep or file outputs burn the context window fast." },
+  { subject: "lessons", type: "fact", content: "LESSON: If QABot returns FAIL twice on the same step, escalate to needs_human_input — never loop on the same failure indefinitely." },
+  { subject: "lessons", type: "fact", content: "LESSON: messages.create() must use retry logic with exponential backoff — transient 429/529 errors must not crash the session." },
+  { subject: "lessons", type: "fact", content: "LESSON: Memory writes must be atomic (write-to-tmp then rename) — a crash mid-write must never corrupt memory.json." },
 ];
 
 export function initializeMemories() {
@@ -98,7 +104,6 @@ export function initializeMemories() {
     changed = true;
   }
 
-  // Migrate: add new bots and lessons if missing
   const migrations = [
     { subject: "WebBot", type: "birthday", content: "Born April 15, 2026 — fetches the web and researches technical topics for the team." },
     { subject: "TestBot", type: "birthday", content: "Born April 20, 2026 — runs tests and makes sure nothing ships broken." },
