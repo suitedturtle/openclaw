@@ -3,34 +3,54 @@ import { SYSTEM_PROMPT } from "./system-prompt.js";
 import { CodeBot } from "./agents/code-bot.js";
 import { DeployBot } from "./agents/deploy-bot.js";
 import { MemoryBot } from "./agents/memory-bot.js";
+import { WebBot } from "./agents/web-bot.js";
+import { TestBot } from "./agents/test-bot.js";
+import { DocBot } from "./agents/doc-bot.js";
+import { QABot } from "./agents/qa-bot.js";
 import { storeMemory, getAllMemories, initializeMemories } from "./memory/store.js";
 
 const CHAT_TOOLS = [
   {
     name: "ask_code_bot",
     description: "Ask CodeBot to search or read files in the openclaw codebase.",
-    input_schema: {
-      type: "object",
-      properties: { question: { type: "string" } },
-      required: ["question"],
-    },
+    input_schema: { type: "object", properties: { question: { type: "string" } }, required: ["question"] },
   },
   {
     name: "ask_deploy_bot",
     description: "Ask DeployBot to run a build, install, or shell command.",
-    input_schema: {
-      type: "object",
-      properties: { task: { type: "string" } },
-      required: ["task"],
-    },
+    input_schema: { type: "object", properties: { task: { type: "string" } }, required: ["task"] },
   },
   {
     name: "ask_memory_bot",
     description: "Ask MemoryBot to recall, search, or synthesize memories about the team and users.",
+    input_schema: { type: "object", properties: { question: { type: "string" } }, required: ["question"] },
+  },
+  {
+    name: "ask_web_bot",
+    description: "Ask WebBot to fetch a URL or research a technical topic on the web.",
+    input_schema: { type: "object", properties: { question: { type: "string" } }, required: ["question"] },
+  },
+  {
+    name: "ask_test_bot",
+    description: "Ask TestBot to run the test suite and report results.",
+    input_schema: { type: "object", properties: { task: { type: "string" } }, required: ["task"] },
+  },
+  {
+    name: "ask_doc_bot",
+    description: "Ask DocBot to read or write documentation.",
+    input_schema: { type: "object", properties: { task: { type: "string" } }, required: ["task"] },
+  },
+  {
+    name: "verify_with_qa",
+    description: "Have QABot cross-check a specialist's output for accuracy and completeness before using it.",
     input_schema: {
       type: "object",
-      properties: { question: { type: "string" } },
-      required: ["question"],
+      properties: {
+        task: { type: "string", description: "What the specialist was asked to do" },
+        specialist: { type: "string", description: "Which bot produced the output (e.g. 'CodeBot')" },
+        output: { type: "string", description: "The specialist's output to review" },
+      },
+      required: ["task", "specialist", "output"],
     },
   },
   {
@@ -40,10 +60,7 @@ const CHAT_TOOLS = [
       type: "object",
       properties: {
         subject: { type: "string" },
-        type: {
-          type: "string",
-          enum: ["fact", "birthday", "preference", "relationship", "conversation", "achievement"],
-        },
+        type: { type: "string", enum: ["fact", "birthday", "preference", "relationship", "conversation", "achievement"] },
         content: { type: "string" },
       },
       required: ["subject", "type", "content"],
@@ -58,9 +75,7 @@ const AUTONOMY_TOOLS = [
     description: "Signal that the autonomous task is fully complete.",
     input_schema: {
       type: "object",
-      properties: {
-        summary: { type: "string", description: "What was accomplished" },
-      },
+      properties: { summary: { type: "string", description: "What was accomplished" } },
       required: ["summary"],
     },
   },
@@ -70,8 +85,8 @@ const AUTONOMY_TOOLS = [
     input_schema: {
       type: "object",
       properties: {
-        question: { type: "string", description: "What you need from the user" },
-        context: { type: "string", description: "Why you need this" },
+        question: { type: "string" },
+        context: { type: "string" },
       },
       required: ["question"],
     },
@@ -83,16 +98,15 @@ You have been given a task. Complete it without asking for help at every step.
 
 Loop:
 1. PLAN — think through what steps are needed before acting
-2. ACT — execute one step using your tools
-3. VERIFY — check the result before moving on
+2. ACT — execute one step using your specialist bots
+3. VERIFY — use verify_with_qa on important outputs before proceeding
 4. REPEAT — keep going until the task is fully done
 
 Rules:
-- Verify each step succeeded before proceeding to the next
-- If a step fails twice in a row, use needs_human_input to ask for help
-- Use task_complete when the entire task is done, with a clear summary of what was accomplished
-- Use needs_human_input if you need a decision only the user can make
-- Be efficient — don't over-explain, just do the work
+- Use verify_with_qa after any significant output (code analysis, doc writes, deploys)
+- If QABot gives FAIL, fix the issue before moving on
+- If a step fails twice, use needs_human_input
+- Use task_complete when done, with a clear summary
 - Save any important findings to memory along the way`.trim();
 
 export class Orchestrator {
@@ -102,6 +116,10 @@ export class Orchestrator {
     this.codeBot = new CodeBot({ apiKey: key });
     this.deployBot = new DeployBot({ apiKey: key });
     this.memoryBot = new MemoryBot({ apiKey: key });
+    this.webBot = new WebBot({ apiKey: key });
+    this.testBot = new TestBot({ apiKey: key });
+    this.docBot = new DocBot({ apiKey: key });
+    this.qaBot = new QABot({ apiKey: key });
     this.history = [];
     initializeMemories();
   }
@@ -118,6 +136,22 @@ export class Orchestrator {
     if (name === "ask_memory_bot") {
       process.stdout.write("  [MemoryBot remembering...]\n");
       return this.memoryBot.ask(input.question);
+    }
+    if (name === "ask_web_bot") {
+      process.stdout.write("  [WebBot fetching...]\n");
+      return this.webBot.ask(input.question);
+    }
+    if (name === "ask_test_bot") {
+      process.stdout.write("  [TestBot running tests...]\n");
+      return this.testBot.ask(input.task);
+    }
+    if (name === "ask_doc_bot") {
+      process.stdout.write("  [DocBot writing...]\n");
+      return this.docBot.ask(input.task);
+    }
+    if (name === "verify_with_qa") {
+      process.stdout.write("  [QABot reviewing...]\n");
+      return this.qaBot.review({ task: input.task, specialist: input.specialist, output: input.output });
     }
     if (name === "save_memory") {
       const m = storeMemory({ bot: "Orchestrator", ...input });
@@ -162,7 +196,7 @@ export class Orchestrator {
     }
   }
 
-  async run(task, { onStep, maxSteps = 20 } = {}) {
+  async run(task, { onStep, maxSteps = 30 } = {}) {
     const runHistory = [
       { role: "user", content: `${this.#memoryPrefix(20)}AUTONOMOUS TASK: ${task}` },
     ];

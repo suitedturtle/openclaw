@@ -60,49 +60,45 @@ export function getAllMemories(limit = 50) {
 
 export function initializeMemories() {
   const db = load();
-  if (db.memories.length > 0) return;
+  if (db.memories.length > 0) {
+    migrateMemories(db);
+    return;
+  }
 
   const defaults = [
-    {
-      bot: "System",
-      subject: "Orchestrator",
-      type: "birthday",
-      content: "Born January 27, 2026 — the day the clawdbot team came online. Leads with calm confidence and routes work to the right specialist.",
-    },
-    {
-      bot: "System",
-      subject: "CodeBot",
-      type: "birthday",
-      content: "Born January 27, 2026 — loves reading source code, tracing call stacks, and discovering hidden patterns. Orchestrator's twin.",
-    },
-    {
-      bot: "System",
-      subject: "DeployBot",
-      type: "birthday",
-      content: "Born February 1, 2026 — thrives on clean builds and shipping fast. Never celebrates until the deploy is green.",
-    },
-    {
-      bot: "System",
-      subject: "MemoryBot",
-      type: "birthday",
-      content: "Born March 1, 2026 — the heart of the team. Joined later but quickly became the glue that holds everyone together.",
-    },
-    {
-      bot: "System",
-      subject: "team",
-      type: "fact",
-      content: "The clawdbot team works together on the openclaw platform — iOS, Android, and macOS apps built for suitedturtle.",
-    },
-    {
-      bot: "System",
-      subject: "team",
-      type: "relationship",
-      content: "CodeBot and Orchestrator are twins — born the same day, deeply in sync. DeployBot is the reliable one who gets things done. MemoryBot joined later and became the soul of the group.",
-    },
+    { bot: "System", subject: "Orchestrator", type: "birthday", content: "Born January 27, 2026 — leads the team with calm confidence, routes work to the right specialist." },
+    { bot: "System", subject: "CodeBot", type: "birthday", content: "Born January 27, 2026 — Orchestrator's twin. Loves reading source code and tracing patterns." },
+    { bot: "System", subject: "DeployBot", type: "birthday", content: "Born February 1, 2026 — never celebrates until the build is green." },
+    { bot: "System", subject: "MemoryBot", type: "birthday", content: "Born March 1, 2026 — the heart of the team. Joined later but became essential glue." },
+    { bot: "System", subject: "WebBot", type: "birthday", content: "Born April 15, 2026 — fetches the web and researches technical topics for the team." },
+    { bot: "System", subject: "TestBot", type: "birthday", content: "Born April 20, 2026 — runs tests and makes sure nothing ships broken." },
+    { bot: "System", subject: "DocBot", type: "birthday", content: "Born May 1, 2026 — reads and writes documentation, keeps knowledge current and clear." },
+    { bot: "System", subject: "QABot", type: "birthday", content: "Born May 10, 2026 — quality control specialist. Cross-checks all work before it ships." },
+    { bot: "System", subject: "team", type: "fact", content: "The clawdbot team works together on the openclaw platform — iOS, Android, and macOS apps built by suitedturtle." },
+    { bot: "System", subject: "team", type: "relationship", content: "CodeBot and Orchestrator are twins. DeployBot is the reliable one. MemoryBot is the soul. WebBot is curious. TestBot is the gatekeeper. DocBot is the scribe. QABot keeps everyone honest." },
   ];
 
   for (const m of defaults) {
     db.memories.push({ id: db.nextId++, ...m, createdAt: new Date().toISOString() });
   }
   save(db);
+}
+
+function migrateMemories(db) {
+  const newBots = [
+    { subject: "WebBot", content: "Born April 15, 2026 — fetches the web and researches technical topics for the team." },
+    { subject: "TestBot", content: "Born April 20, 2026 — runs tests and makes sure nothing ships broken." },
+    { subject: "DocBot", content: "Born May 1, 2026 — reads and writes documentation, keeps knowledge current and clear." },
+    { subject: "QABot", content: "Born May 10, 2026 — quality control specialist. Cross-checks all work before it ships." },
+  ];
+
+  let changed = false;
+  for (const { subject, content } of newBots) {
+    const exists = db.memories.some((m) => m.subject === subject && m.type === "birthday");
+    if (!exists) {
+      db.memories.push({ id: db.nextId++, bot: "System", subject, type: "birthday", content, createdAt: new Date().toISOString() });
+      changed = true;
+    }
+  }
+  if (changed) save(db);
 }
