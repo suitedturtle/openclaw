@@ -7,7 +7,9 @@ import { WebBot } from "./agents/web-bot.js";
 import { TestBot } from "./agents/test-bot.js";
 import { DocBot } from "./agents/doc-bot.js";
 import { QABot } from "./agents/qa-bot.js";
+import { VisionBot } from "./agents/vision-bot.js";
 import { storeMemory, getAllMemories, initializeMemories } from "./memory/store.js";
+import { postMessage, readInbox } from "./memory/messages.js";
 
 const MAX_HISTORY = 40;
 const MAX_RUN_HISTORY = 60;
@@ -28,12 +30,12 @@ const CHAT_TOOLS = [
   },
   {
     name: "ask_memory_bot",
-    description: "Ask MemoryBot to recall, search, or synthesize memories about the team and users.",
+    description: "Ask MemoryBot to recall, search, or synthesize memories.",
     input_schema: { type: "object", properties: { question: { type: "string" } }, required: ["question"] },
   },
   {
     name: "ask_web_bot",
-    description: "Ask WebBot to fetch a public URL or research a technical topic on the web.",
+    description: "Ask WebBot to fetch a public URL or research a topic on the web.",
     input_schema: { type: "object", properties: { question: { type: "string" } }, required: ["question"] },
   },
   {
@@ -47,8 +49,21 @@ const CHAT_TOOLS = [
     input_schema: { type: "object", properties: { task: { type: "string" } }, required: ["task"] },
   },
   {
+    name: "ask_vision_bot",
+    description: "Ask VisionBot to analyze an image, screenshot, UI design, or any visual content.",
+    input_schema: {
+      type: "object",
+      properties: {
+        task: { type: "string", description: "What to look for or analyze in the image" },
+        image_path: { type: "string", description: "Local file path to the image" },
+        image_url: { type: "string", description: "Public URL of the image" },
+      },
+      required: ["task"],
+    },
+  },
+  {
     name: "verify_with_qa",
-    description: "Have QABot cross-check a specialist's output for accuracy and completeness before using it.",
+    description: "Have QABot cross-check a specialist's output for accuracy and completeness.",
     input_schema: {
       type: "object",
       properties: {
@@ -60,13 +75,51 @@ const CHAT_TOOLS = [
     },
   },
   {
+    name: "send_bot_message",
+    description: "Send a direct message from one bot to another for handoffs, notes, or coordination.",
+    input_schema: {
+      type: "object",
+      properties: {
+        from: { type: "string", description: "Sending bot name" },
+        to: { type: "string", description: "Receiving bot name, or 'all' for broadcast" },
+        content: { type: "string", description: "Message content" },
+      },
+      required: ["from", "to", "content"],
+    },
+  },
+  {
+    name: "check_bot_inbox",
+    description: "Check unread messages waiting for a specific bot.",
+    input_schema: {
+      type: "object",
+      properties: { bot: { type: "string", description: "Which bot's inbox to check" } },
+      required: ["bot"],
+    },
+  },
+  {
+    name: "suggest_improvement",
+    description: "Log a suggestion for improving the team's tools or capabilities for future review.",
+    input_schema: {
+      type: "object",
+      properties: {
+        bot: { type: "string", description: "Which bot or area needs improvement" },
+        issue: { type: "string", description: "The current limitation or problem" },
+        suggestion: { type: "string", description: "How to fix or improve it" },
+      },
+      required: ["bot", "issue", "suggestion"],
+    },
+  },
+  {
     name: "save_memory",
-    description: "Save an important fact, preference, birthday, relationship note, or achievement to long-term memory.",
+    description: "Save an important fact, preference, birthday, relationship, achievement, or improvement note.",
     input_schema: {
       type: "object",
       properties: {
         subject: { type: "string" },
-        type: { type: "string", enum: ["fact", "birthday", "preference", "relationship", "conversation", "achievement"] },
+        type: {
+          type: "string",
+          enum: ["fact", "birthday", "preference", "relationship", "conversation", "achievement", "improvement"],
+        },
         content: { type: "string" },
       },
       required: ["subject", "type", "content"],
@@ -87,7 +140,7 @@ const AUTONOMY_TOOLS = [
   },
   {
     name: "needs_human_input",
-    description: "Pause autonomous execution and ask the user a question before continuing.",
+    description: "Pause autonomous execution and ask the user a question.",
     input_schema: {
       type: "object",
       properties: { question: { type: "string" }, context: { type: "string" } },
@@ -107,14 +160,18 @@ Loop:
 
 Retry and escalation rules:
 - If a tool returns an error, try a different approach once before escalating
-- If QABot returns FAIL, fix the specific issue it identified and retry that step once
-- If QABot returns FAIL a second time on the same step, use needs_human_input — do not loop further
-- If QABot returns WARN, note the issues but proceed unless they are blocking
-- Never retry the same failing action more than twice total
+- If QABot returns FAIL, fix the specific issue and retry that step once
+- If QABot returns FAIL a second time on the same step, use needs_human_input
+- If QABot returns WARN, note the issues but proceed unless blocking
+- Never retry the same failing action more than twice
+
+Bot coordination:
+- Use send_bot_message to leave notes for other bots during handoffs
+- Use check_bot_inbox to see if a bot has pending context before tasking it
+- Use suggest_improvement if you notice a tool limitation during the task
 
 General rules:
 - Use task_complete when done with a clear summary
-- Use needs_human_input for decisions only the user can make
 - Save important findings to memory along the way`.trim();
 
 function capToolResult(result) {
@@ -151,11 +208,11 @@ export class Orchestrator {
     this.testBot = new TestBot({ apiKey: key });
     this.docBot = new DocBot({ apiKey: key });
     this.qaBot = new QABot({ apiKey: key });
+    this.visionBot = new VisionBot({ apiKey: key });
     this.history = [];
     initializeMemories();
   }
 
-  // Retries on transient API errors (rate limits, server errors) with exponential backoff.
   async #createMessage(params) {
     for (let attempt = 0; attempt <= API_MAX_RETRIES; attempt++) {
       try {
@@ -194,9 +251,36 @@ export class Orchestrator {
         process.stdout.write("  [DocBot writing...]\n");
         return await this.docBot.ask(input.task);
       }
+      if (name === "ask_vision_bot") {
+        process.stdout.write("  [VisionBot looking...]\n");
+        return await this.visionBot.analyze({
+          task: input.task,
+          imagePath: input.image_path,
+          imageUrl: input.image_url,
+        });
+      }
       if (name === "verify_with_qa") {
         process.stdout.write("  [QABot reviewing...]\n");
         return await this.qaBot.review({ task: input.task, specialist: input.specialist, output: input.output });
+      }
+      if (name === "send_bot_message") {
+        const m = postMessage(input);
+        return `Message sent (id: ${m.id}) from ${m.from} to ${m.to}.`;
+      }
+      if (name === "check_bot_inbox") {
+        const msgs = readInbox(input.bot);
+        return msgs.length
+          ? msgs.map((m) => `[from ${m.from}] ${m.content}`).join("\n")
+          : `No unread messages for ${input.bot}.`;
+      }
+      if (name === "suggest_improvement") {
+        const m = storeMemory({
+          bot: "Orchestrator",
+          subject: input.bot,
+          type: "improvement",
+          content: `ISSUE: ${input.issue} | SUGGESTION: ${input.suggestion}`,
+        });
+        return `Improvement suggestion saved (id: ${m.id}).`;
       }
       if (name === "save_memory") {
         const m = storeMemory({ bot: "Orchestrator", ...input });
