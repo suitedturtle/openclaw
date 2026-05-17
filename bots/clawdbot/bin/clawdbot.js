@@ -14,10 +14,11 @@ const rl = readline.createInterface({
 });
 
 if (process.stdin.isTTY) {
-  console.log("Clawdbot (team mode) ready. Type your message and press Enter (Ctrl+C to quit).\n");
-  console.log("  CodeBot   — searches and reads the codebase");
-  console.log("  DeployBot — runs builds and shell commands");
-  console.log("  Orchestrator — routes your request to the right specialist\n");
+  console.log("Clawdbot ready. Your autonomous AI team is standing by.\n");
+  console.log("  Chat:       just type your message");
+  console.log("  Autonomous: /run <task>  (plan → act → verify → repeat)");
+  console.log("  Clear:      /clear");
+  console.log("  Quit:       Ctrl+C\n");
 }
 
 const prompt = () => {
@@ -33,6 +34,42 @@ rl.on("line", async (line) => {
   if (input === "/clear") {
     bot.clearHistory();
     console.log("[history cleared]\n");
+    prompt();
+    return;
+  }
+
+  if (input.startsWith("/run ")) {
+    const task = input.slice(5).trim();
+    if (!task) { prompt(); return; }
+
+    console.log(`\n[autonomous] ${task}\n`);
+    let stepCount = 0;
+
+    try {
+      const result = await bot.run(task, {
+        onStep: ({ type, step, tool, result, summary, question }) => {
+          if (type === "step") {
+            console.log(`[step ${step}] ${tool}`);
+            if (result) console.log(`  └ ${result.split("\n")[0]}`);
+          } else if (type === "complete") {
+            console.log(`\n[done] ${summary}`);
+          } else if (type === "needs_input") {
+            console.log(`\n[needs input] ${question}`);
+          }
+        },
+      });
+
+      if (result.status === "needs_input") {
+        console.log(`\nclawdbot > ${result.question}\n`);
+      } else if (result.summary) {
+        console.log(`\nclawdbot > ${result.summary}\n`);
+      } else {
+        console.log(`\n[${result.status}]\n`);
+      }
+    } catch (err) {
+      console.error(`\n[error] ${err.message}\n`);
+    }
+
     prompt();
     return;
   }
