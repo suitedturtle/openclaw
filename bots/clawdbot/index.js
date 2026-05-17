@@ -8,4 +8,6 @@ export { TestBot } from "./src/agents/test-bot.js";
 export { DocBot } from "./src/agents/doc-bot.js";
 export { QABot } from "./src/agents/qa-bot.js";
 export { VisionBot } from "./src/agents/vision-bot.js";
+export { EditorBot } from "./src/agents/editor-bot.js";
+export { ReviewBot } from "./src/agents/review-bot.js";
 export { SYSTEM_PROMPT } from "./src/system-prompt.js";

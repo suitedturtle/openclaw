@@ -79,6 +79,8 @@ const LESSONS = [
   { subject: "lessons", type: "fact", content: "LESSON: If QABot returns FAIL twice on the same step, escalate to needs_human_input — never loop on the same failure indefinitely." },
   { subject: "lessons", type: "fact", content: "LESSON: messages.create() must use retry logic with exponential backoff — transient 429/529 errors must not crash the session." },
   { subject: "lessons", type: "fact", content: "LESSON: Memory writes must be atomic (write-to-tmp then rename) — a crash mid-write must never corrupt memory.json." },
+  { subject: "lessons", type: "fact", content: "LESSON: EditorBot must always read a file before editing it — never patch from memory or assumption; always use exact text for patch_file." },
+  { subject: "lessons", type: "fact", content: "LESSON: Code edits must be reviewed and QA-verified — use ask_review_bot before editing and verify_with_qa after EditorBot writes; .bak backups are automatic but not a substitute for review." },
 ];
 
 export function initializeMemories() {
@@ -96,7 +98,7 @@ export function initializeMemories() {
       { subject: "DocBot", type: "birthday", content: "Born May 1, 2026 — reads and writes documentation, keeps knowledge current and clear." },
       { subject: "QABot", type: "birthday", content: "Born May 10, 2026 — quality control specialist. Cross-checks all work before it ships." },
       { subject: "team", type: "fact", content: "The clawdbot team works on the openclaw platform — iOS, Android, and macOS apps built by suitedturtle." },
-      { subject: "team", type: "relationship", content: "CodeBot and Orchestrator are twins. DeployBot is reliable. MemoryBot is the soul. WebBot is curious. TestBot is the gatekeeper. DocBot is the scribe. QABot keeps everyone honest." },
+      { subject: "team", type: "relationship", content: "CodeBot and Orchestrator are twins. DeployBot is reliable. MemoryBot is the soul. WebBot is curious. TestBot is the gatekeeper. DocBot is the scribe. QABot keeps everyone honest. EditorBot and ReviewBot are the newest twins — joined Jun 15 2026." },
     ];
     for (const m of defaults) {
       db.memories.push({ id: db.nextId++, bot: "System", ...m, createdAt: new Date().toISOString() });
@@ -109,11 +111,16 @@ export function initializeMemories() {
     { subject: "TestBot", type: "birthday", content: "Born April 20, 2026 — runs tests and makes sure nothing ships broken." },
     { subject: "DocBot", type: "birthday", content: "Born May 1, 2026 — reads and writes documentation, keeps knowledge current and clear." },
     { subject: "QABot", type: "birthday", content: "Born May 10, 2026 — quality control specialist. Cross-checks all work before it ships." },
+    { subject: "VisionBot", type: "birthday", content: "Born June 1, 2026 — the team's eyes. Analyzes screenshots, UI designs, and visual content." },
+    { subject: "EditorBot", type: "birthday", content: "Born June 15, 2026 — writes and patches source code with precision. Always reads before editing; .bak backups on every write." },
+    { subject: "ReviewBot", type: "birthday", content: "Born June 15, 2026 — EditorBot's twin and quality partner. Reviews code for bugs, security issues, and gaps before any edit ships." },
     ...LESSONS,
   ];
 
   for (const m of migrations) {
-    const exists = db.memories.some((e) => e.subject === m.subject && e.type === m.type && e.content === m.content);
+    const exists = db.memories.some(
+      (e) => e.subject === m.subject && e.type === m.type && e.content === m.content
+    );
     if (!exists) {
       db.memories.push({ id: db.nextId++, bot: "System", ...m, createdAt: new Date().toISOString() });
       changed = true;

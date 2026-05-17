@@ -41,6 +41,7 @@ if (process.stdin.isTTY) {
   console.log("Clawdbot ready. Your autonomous AI team is standing by.\n");
   console.log("  Chat:            just type your message");
   console.log("  Autonomous:      /run <task>");
+  console.log("  Session cost:    /cost");
   console.log("  Schedule:        /schedule list");
   console.log("                   /schedule add <name> <minutes> <task>");
   console.log("                   /schedule remove <id>");
@@ -63,6 +64,15 @@ rl.on("line", async (line) => {
   if (input === "/clear") {
     bot.clearHistory();
     console.log("[history cleared]\n");
+    prompt();
+    return;
+  }
+
+  // /cost
+  if (input === "/cost") {
+    const c = bot.getCost();
+    console.log(`[cost] Session tokens: ${c.inputTokens.toLocaleString()} in / ${c.outputTokens.toLocaleString()} out (${c.totalTokens.toLocaleString()} total)`);
+    console.log(`[cost] Estimated spend: ${c.formatted} (claude-opus-4-7 rates)\n`);
     prompt();
     return;
   }

@@ -8,6 +8,8 @@ import { TestBot } from "./agents/test-bot.js";
 import { DocBot } from "./agents/doc-bot.js";
 import { QABot } from "./agents/qa-bot.js";
 import { VisionBot } from "./agents/vision-bot.js";
+import { EditorBot } from "./agents/editor-bot.js";
+import { ReviewBot } from "./agents/review-bot.js";
 import { storeMemory, getAllMemories, initializeMemories } from "./memory/store.js";
 import { postMessage, readInbox } from "./memory/messages.js";
 
@@ -16,6 +18,10 @@ const MAX_RUN_HISTORY = 60;
 const MAX_TOOL_RESULT = 8 * 1024;
 const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000;
 const API_MAX_RETRIES = 2;
+
+// claude-opus-4-7 pricing (USD per million tokens)
+const INPUT_RATE = 5 / 1_000_000;
+const OUTPUT_RATE = 25 / 1_000_000;
 
 const CHAT_TOOLS = [
   {
@@ -46,6 +52,18 @@ const CHAT_TOOLS = [
   {
     name: "ask_doc_bot",
     description: "Ask DocBot to read or write documentation.",
+    input_schema: { type: "object", properties: { task: { type: "string" } }, required: ["task"] },
+  },
+  {
+    name: "ask_editor_bot",
+    description:
+      "Ask EditorBot to write, create, or patch source code files. Always verify important edits with QABot after.",
+    input_schema: { type: "object", properties: { task: { type: "string" } }, required: ["task"] },
+  },
+  {
+    name: "ask_review_bot",
+    description:
+      "Ask ReviewBot to review a file or piece of code for bugs, security issues, and quality problems.",
     input_schema: { type: "object", properties: { task: { type: "string" } }, required: ["task"] },
   },
   {
@@ -111,7 +129,8 @@ const CHAT_TOOLS = [
   },
   {
     name: "save_memory",
-    description: "Save an important fact, preference, birthday, relationship, achievement, or improvement note.",
+    description:
+      "Save an important fact, preference, birthday, relationship, achievement, or improvement note.",
     input_schema: {
       type: "object",
       properties: {
@@ -165,6 +184,11 @@ Retry and escalation rules:
 - If QABot returns WARN, note the issues but proceed unless blocking
 - Never retry the same failing action more than twice
 
+Code editing rules:
+- Use ask_review_bot before ask_editor_bot on any file you plan to change
+- After EditorBot writes or patches a file, verify with QABot before moving on
+- EditorBot's .bak files are automatic backups — mention them in the task summary
+
 Bot coordination:
 - Use send_bot_message to leave notes for other bots during handoffs
 - Use check_bot_inbox to see if a bot has pending context before tasking it
@@ -209,20 +233,39 @@ export class Orchestrator {
     this.docBot = new DocBot({ apiKey: key });
     this.qaBot = new QABot({ apiKey: key });
     this.visionBot = new VisionBot({ apiKey: key });
+    this.editorBot = new EditorBot({ apiKey: key });
+    this.reviewBot = new ReviewBot({ apiKey: key });
     this.history = [];
+    this.sessionTokens = { inputTokens: 0, outputTokens: 0 };
     initializeMemories();
   }
 
   async #createMessage(params) {
     for (let attempt = 0; attempt <= API_MAX_RETRIES; attempt++) {
       try {
-        return await this.client.messages.create(params);
+        const response = await this.client.messages.create(params);
+        this.sessionTokens.inputTokens += response.usage?.input_tokens ?? 0;
+        this.sessionTokens.outputTokens += response.usage?.output_tokens ?? 0;
+        return response;
       } catch (e) {
-        const retryable = e.status === 429 || e.status === 529 || (e.status >= 500 && e.status < 600);
+        const retryable =
+          e.status === 429 || e.status === 529 || (e.status >= 500 && e.status < 600);
         if (!retryable || attempt === API_MAX_RETRIES) throw e;
         await new Promise((r) => setTimeout(r, Math.pow(2, attempt) * 1000));
       }
     }
+  }
+
+  getCost() {
+    const { inputTokens, outputTokens } = this.sessionTokens;
+    const cost = inputTokens * INPUT_RATE + outputTokens * OUTPUT_RATE;
+    return {
+      inputTokens,
+      outputTokens,
+      totalTokens: inputTokens + outputTokens,
+      estimatedCostUSD: cost,
+      formatted: `$${cost.toFixed(4)}`,
+    };
   }
 
   async #executeTool(name, input) {
@@ -250,6 +293,14 @@ export class Orchestrator {
       if (name === "ask_doc_bot") {
         process.stdout.write("  [DocBot writing...]\n");
         return await this.docBot.ask(input.task);
+      }
+      if (name === "ask_editor_bot") {
+        process.stdout.write("  [EditorBot editing...]\n");
+        return await this.editorBot.edit(input.task);
+      }
+      if (name === "ask_review_bot") {
+        process.stdout.write("  [ReviewBot reviewing...]\n");
+        return await this.reviewBot.review(input.task);
       }
       if (name === "ask_vision_bot") {
         process.stdout.write("  [VisionBot looking...]\n");
@@ -317,7 +368,10 @@ export class Orchestrator {
       this.history.push({ role: "assistant", content: response.content });
 
       if (response.stop_reason === "end_turn") {
-        return response.content.filter((b) => b.type === "text").map((b) => b.text).join("");
+        return response.content
+          .filter((b) => b.type === "text")
+          .map((b) => b.text)
+          .join("");
       }
 
       const results = [];
