@@ -1,0 +1,10 @@
+export { Orchestrator } from "./src/orchestrator.js";
+export { ClawBot } from "./src/bot.js";
+export { CodeBot } from "./src/agents/code-bot.js";
+export { DeployBot } from "./src/agents/deploy-bot.js";
+export { MemoryBot } from "./src/agents/memory-bot.js";
+export { WebBot } from "./src/agents/web-bot.js";
+export { TestBot } from "./src/agents/test-bot.js";
+export { DocBot } from "./src/agents/doc-bot.js";
+export { QABot } from "./src/agents/qa-bot.js";
+export { SYSTEM_PROMPT } from "./src/system-prompt.js";
