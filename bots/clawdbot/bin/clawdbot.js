@@ -1,12 +1,11 @@
 #!/usr/bin/env node
 import { config } from "dotenv";
 import readline from "node:readline";
-import { ClawBot } from "../src/bot.js";
+import { Orchestrator } from "../src/orchestrator.js";
 
-// Load .env from the package root (bots/clawdbot/.env) regardless of cwd
 config({ path: new URL("../.env", import.meta.url) });
 
-const bot = new ClawBot();
+const bot = new Orchestrator();
 
 const rl = readline.createInterface({
   input: process.stdin,
@@ -15,7 +14,10 @@ const rl = readline.createInterface({
 });
 
 if (process.stdin.isTTY) {
-  console.log("Clawdbot ready. Type your message and press Enter (Ctrl+C to quit).\n");
+  console.log("Clawdbot (team mode) ready. Type your message and press Enter (Ctrl+C to quit).\n");
+  console.log("  CodeBot   — searches and reads the codebase");
+  console.log("  DeployBot — runs builds and shell commands");
+  console.log("  Orchestrator — routes your request to the right specialist\n");
 }
 
 const prompt = () => {
@@ -30,7 +32,7 @@ rl.on("line", async (line) => {
 
   if (input === "/clear") {
     bot.clearHistory();
-    console.log("[history cleared]");
+    console.log("[history cleared]\n");
     prompt();
     return;
   }
