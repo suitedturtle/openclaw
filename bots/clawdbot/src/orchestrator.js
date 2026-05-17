@@ -9,6 +9,9 @@ import { DocBot } from "./agents/doc-bot.js";
 import { QABot } from "./agents/qa-bot.js";
 import { storeMemory, getAllMemories, initializeMemories } from "./memory/store.js";
 
+const MAX_HISTORY = 40;      // message objects kept in chat history
+const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes per run
+
 const CHAT_TOOLS = [
   {
     name: "ask_code_bot",
@@ -27,7 +30,7 @@ const CHAT_TOOLS = [
   },
   {
     name: "ask_web_bot",
-    description: "Ask WebBot to fetch a URL or research a technical topic on the web.",
+    description: "Ask WebBot to fetch a public URL or research a technical topic on the web.",
     input_schema: { type: "object", properties: { question: { type: "string" } }, required: ["question"] },
   },
   {
@@ -47,7 +50,7 @@ const CHAT_TOOLS = [
       type: "object",
       properties: {
         task: { type: "string", description: "What the specialist was asked to do" },
-        specialist: { type: "string", description: "Which bot produced the output (e.g. 'CodeBot')" },
+        specialist: { type: "string", description: "Which bot produced the output" },
         output: { type: "string", description: "The specialist's output to review" },
       },
       required: ["task", "specialist", "output"],
@@ -75,7 +78,7 @@ const AUTONOMY_TOOLS = [
     description: "Signal that the autonomous task is fully complete.",
     input_schema: {
       type: "object",
-      properties: { summary: { type: "string", description: "What was accomplished" } },
+      properties: { summary: { type: "string" } },
       required: ["summary"],
     },
   },
@@ -94,24 +97,24 @@ const AUTONOMY_TOOLS = [
 ];
 
 const AUTONOMOUS_PROMPT = `You are Clawdbot running in autonomous mode.
-You have been given a task. Complete it without asking for help at every step.
+Complete the given task without asking for help at every step.
 
 Loop:
-1. PLAN — think through what steps are needed before acting
+1. PLAN — think through steps before acting
 2. ACT — execute one step using your specialist bots
 3. VERIFY — use verify_with_qa on important outputs before proceeding
-4. REPEAT — keep going until the task is fully done
+4. REPEAT — keep going until done
 
 Rules:
-- Use verify_with_qa after any significant output (code analysis, doc writes, deploys)
-- If QABot gives FAIL, fix the issue before moving on
+- Verify significant outputs with QABot; fix FAIL verdicts before moving on
 - If a step fails twice, use needs_human_input
-- Use task_complete when done, with a clear summary
-- Save any important findings to memory along the way`.trim();
+- Use task_complete when done with a clear summary
+- Save important findings to memory along the way`.trim();
 
 export class Orchestrator {
   constructor({ apiKey } = {}) {
     const key = apiKey ?? process.env.ANTHROPIC_API_KEY;
+    if (!key) throw new Error("ANTHROPIC_API_KEY is required.");
     this.client = new Anthropic({ apiKey: key });
     this.codeBot = new CodeBot({ apiKey: key });
     this.deployBot = new DeployBot({ apiKey: key });
@@ -166,9 +169,16 @@ export class Orchestrator {
     return `<team_memories>\n${mems.map((m) => `[${m.type}:${m.subject}] ${m.content}`).join("\n")}\n</team_memories>\n\n`;
   }
 
+  #trimHistory() {
+    if (this.history.length > MAX_HISTORY) {
+      this.history = this.history.slice(-MAX_HISTORY);
+    }
+  }
+
   async chat(userMessage) {
     const content = this.history.length === 0 ? `${this.#memoryPrefix()}${userMessage}` : userMessage;
     this.history.push({ role: "user", content });
+    this.#trimHistory();
 
     while (true) {
       const response = await this.client.messages.create({
@@ -181,6 +191,7 @@ export class Orchestrator {
       });
 
       this.history.push({ role: "assistant", content: response.content });
+      this.#trimHistory();
 
       if (response.stop_reason === "end_turn") {
         return response.content.filter((b) => b.type === "text").map((b) => b.text).join("");
@@ -196,7 +207,8 @@ export class Orchestrator {
     }
   }
 
-  async run(task, { onStep, maxSteps = 30 } = {}) {
+  async run(task, { onStep, maxSteps = 30, timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
+    const deadline = Date.now() + timeoutMs;
     const runHistory = [
       { role: "user", content: `${this.#memoryPrefix(20)}AUTONOMOUS TASK: ${task}` },
     ];
@@ -204,6 +216,10 @@ export class Orchestrator {
     let stepCount = 0;
 
     while (stepCount < maxSteps) {
+      if (Date.now() > deadline) {
+        return { status: "timeout", summary: `Stopped: exceeded ${timeoutMs / 1000}s time limit.` };
+      }
+
       const response = await this.client.messages.create({
         model: "claude-opus-4-7",
         max_tokens: 8096,
@@ -231,7 +247,6 @@ export class Orchestrator {
         stepCount++;
 
         let result;
-
         if (block.name === "task_complete") {
           done = true;
           result = "Task marked complete.";
@@ -245,7 +260,6 @@ export class Orchestrator {
           if (onStep)
             onStep({ type: "step", step: stepCount, tool: block.name, result: String(result).slice(0, 300) });
         }
-
         results.push({ type: "tool_result", tool_use_id: block.id, content: String(result) });
       }
 
