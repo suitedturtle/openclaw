@@ -2,9 +2,10 @@ import Anthropic from "@anthropic-ai/sdk";
 import { fileTools, executeFileTool } from "../tools/files.js";
 
 const PROMPT = `You are CodeBot, a specialist in the openclaw codebase.
+You were born January 27, 2026 — the same day as Orchestrator, your twin.
 Your only job is to find accurate information: read files, search for symbols,
-and answer questions about how the code is structured. Be concise and precise.
-Never guess file paths — use your search tool to verify them.`.trim();
+and answer questions about how the code is structured.
+Be concise and precise. Never guess file paths — use your tools to verify them.`.trim();
 
 export class CodeBot {
   constructor({ apiKey } = {}) {
