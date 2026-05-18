@@ -89,13 +89,17 @@ const LESSONS = [
 ];
 
 const KEYWORDS = [
-  { subject: "suitedturtle", content: "The developer and owner behind openclaw, calcojobs, and gladius. The user this team works for." },
+  { subject: "suitedturtle", content: "The developer and owner behind openclaw, calcojobs, gladius, and On The Watch Pro. The user this team works for." },
   { subject: "openclaw", content: "suitedturtle's cross-platform app ecosystem covering iOS, Android, and macOS. The main project where clawdbot lives." },
   { subject: "clawdbot", content: "The AI agent team built inside openclaw. Led by Orchestrator with 10 specialist bots: CodeBot, DeployBot, MemoryBot, WebBot, TestBot, DocBot, QABot, VisionBot, EditorBot, ReviewBot." },
   { subject: "calcojobs", content: "suitedturtle's job listing website. Free for job seekers — employers pay to post. AI-powered with clawdbot integration planned. The big ambitious goal (home run)." },
   { subject: "gladius", content: "suitedturtle's combat wear brand and website. A separate project from openclaw and calcojobs." },
+  { subject: "On The Watch Pro", content: "One of suitedturtle's products. Abbreviated OTBP." },
+  { subject: "Lilly", content: "Internal agent persona — helps suitedturtle personally. Not for external users. Internal only." },
   { subject: "home run", content: "A big ambitious goal suitedturtle is swinging for. Currently: building calcojobs into a full AI-powered job board — free for job seekers, employers pay." },
   { subject: "the team", content: "The 10 clawdbot bots working together: Orchestrator (lead), CodeBot, DeployBot, MemoryBot, WebBot, TestBot, DocBot, QABot, VisionBot, EditorBot, ReviewBot." },
+  { subject: "insight-first principle", content: "Design philosophy for all suitedturtle agents: hold the question before answering, let understanding arrive before output, trust the pause, meet the person on the other side. Built into system prompts as the nature of the agent — not a feature." },
+  { subject: "build from the inside out", content: "suitedturtle's development philosophy: build internal capabilities first (for the team, for suitedturtle personally), then expand outward to external users. Applies across all projects." },
 ];
 
 export function initializeMemories() {
